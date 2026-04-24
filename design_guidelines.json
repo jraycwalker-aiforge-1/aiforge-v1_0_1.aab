@@ -1,0 +1,99 @@
+{
+  "app_name": "ForgeAI",
+  "theme_and_archetype": {
+    "theme": "Dark",
+    "archetype": "Archetype 2: Performance Pro / Technical Maker",
+    "rationale": "For a 3D printing and AI generator app, the interface needs to feel like a high-end, precision maker tool (like a dark mode slicer). We avoid 'AI magic' purples and instead use deep obsidian, blueprint blues, and alert oranges."
+  },
+  "typography": {
+    "heading": "Outfit",
+    "body": "Manrope",
+    "monospace": "JetBrains Mono",
+    "hierarchy": {
+      "h1": "text-4xl font-bold tracking-tighter",
+      "h2": "text-2xl font-semibold tracking-tight",
+      "h3": "text-lg font-medium tracking-tight",
+      "body": "text-base font-normal leading-relaxed",
+      "data_labels": "text-xs font-mono tracking-widest uppercase text-zinc-400"
+    },
+    "rules": "Never use Inter for headings. Always use JetBrains Mono for G-code, slicer settings values, mesh stats, and dimensions to emphasize the technical nature of the app."
+  },
+  "colors": {
+    "background": {
+      "default": "#09090B",
+      "surface": "#18181B",
+      "surface_elevated": "#27272A"
+    },
+    "text": {
+      "primary": "#FFFFFF",
+      "secondary": "#A1A1AA",
+      "disabled": "#52525B"
+    },
+    "brand": {
+      "primary": "#2563EB",
+      "primary_hover": "#1D4ED8",
+      "accent_slicer": "#F97316",
+      "success": "#10B981"
+    },
+    "rules": "Avoid gradients unless simulating lighting on 3D objects. Rely on 1px solid borders and high-contrast text. Strictly no purple/violet AI-slop colors."
+  },
+  "layout_and_spacing": {
+    "strategy": "Mobile-first, thumb-friendly.",
+    "navigation": "Sticky bottom tab bar with glassmorphism (bg-black/60 backdrop-blur-xl border-t border-white/10) for one-handed use.",
+    "grids": "Control Room Grid for Slicer Settings (dense, data-rich). Bento Grid for the Library/Gallery.",
+    "padding": "Generous spacing (p-4 to p-6) for main screens, but dense (p-2 to p-3) for slicer inputs to fit everything on screen."
+  },
+  "components_instructions": {
+    "cards": "Use flat solid background (#18181B) with 1px border (#27272A). No soft drop shadows. Sharp and tactile.",
+    "buttons": "Primary buttons use #2563EB background with white text. High contrast hover states. Include data-testid on all buttons.",
+    "3d_viewer": "Should be a full-bleed view where possible. Overlaid data (mesh info, triangle count, print time) should use 'Crystal Glass' floating panels (backdrop-blur-md bg-black/40 border-white/10).",
+    "forms_inputs": "Shadcn Input, Select, and Slider for slicer settings. Thumb-friendly sliders are crucial for layer height and infill. Values should be displayed in JetBrains Mono.",
+    "tabs": "Use Shadcn Tabs for Gallery (Images, Videos, 3D Models) and Slicer modes. Custom styling to remove bubble look; use sharp underlines or solid block highlights.",
+    "bottom_sheet": "Use Shadcn Dialog/Drawer to pull up Slicer Settings from the bottom, keeping the 3D model visible in the background."
+  },
+  "motion_and_interaction": {
+    "transitions": "Mechanical and snappy. Avoid long, floaty animations.",
+    "hover_states": "Hover/active states must increase brightness and optionally add a 1px primary color border.",
+    "haptics": "Assume haptic feedback on mobile for sliders and slice generation."
+  },
+  "accessibility_and_testing": {
+    "contrast": "Maintain strictly WCAG AA contrast (4.5:1 for body text, 3:1 for large text).",
+    "testing_attributes": "All interactive and key informational elements MUST include a data-testid attribute in kebab-case and role-based format (e.g., data-testid='generate-3d-button')."
+  },
+  "icons": {
+    "library": "lucide-react",
+    "style": "Technical, sharp, consistent stroke width."
+  },
+  "image_urls": [
+    {
+      "category": "dashboard_hero",
+      "url": "https://images.unsplash.com/photo-1758435170505-e9b2772348c1?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzOTB8MHwxfHNlYXJjaHwzfHwzZCUyMHByaW50ZXIlMjBwcmludGluZyUyMHBsYXN0aWMlMjBvYmplY3R8ZW58MHx8fHwxNzc3MDMyMzUyfDA&ixlib=rb-4.1.0&q=85",
+      "description": "3D printer with orange accents on workbench"
+    },
+    {
+      "category": "gallery_3d_placeholder",
+      "url": "https://images.pexels.com/photos/28428584/pexels-photo-28428584.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "description": "Dynamic 3D geometric shapes creating a modern abstract design"
+    },
+    {
+      "category": "profile_avatar",
+      "url": "https://images.unsplash.com/photo-1627890458144-4c0c481bf4b8?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxNzV8MHwxfHNlYXJjaHwyfHxwcm9maWxlJTIwcGljdHVyZSUyMHByb2Zlc3Npb25hbCUyMHN0dWRpbyUyMGRhcmt8ZW58MHx8fHwxNzc3MDMyMzY4fDA&ixlib=rb-4.1.0&q=85",
+      "description": "man in crew neck t-shirt with dark studio background"
+    },
+    {
+      "category": "printing_action",
+      "url": "https://images.pexels.com/photos/31137405/pexels-photo-31137405.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "description": "Detailed view of a 3D printer in action, extruding orange plastic components"
+    }
+  ],
+  "instructions_to_main_agent": [
+    "Build a mobile-first PWA or responsive web app UI representing 'ForgeAI'.",
+    "Ensure a bottom navigation bar for mobile views containing Dashboard, Generate, Gallery, Profile.",
+    "Implement Shadcn UI for forms, sliders (slicer settings), tabs, and dialogs.",
+    "For the 3D Viewer screen, use a mockup container if Three.js/R3F is unavailable, but layer glassmorphic UI panels (dimensions, mesh count) over it to show the spatial UX pattern.",
+    "Use JetBrains Mono for any technical metrics, slice times, G-code snippets, or layer heights.",
+    "Do NOT use gradients on backgrounds; stick to the solid #09090B and #18181B theme. Apply 1px #27272A borders aggressively to delineate sections (Grid Borders look).",
+    "Gallery should separate Images, Videos, and 3D Models with clear tab navigation.",
+    "MUST include 'data-testid' on ALL inputs, buttons, tab triggers, and generation controls."
+  ]
+}
