@@ -1,0 +1,95 @@
+{
+  "summary": "ForgeAI backend + frontend tested end-to-end. 15/16 pytest cases pass (1 was my test bug, fixed). Image gen (Gemini), Model gen (Claude+SCAD/STL), all assets CRUD, slicer update, gcode preview, dashboard, auth all work. The user-reported 'video says making but doesn't' bug is CONFIRMED and ROOT-CAUSED: Sora 2 video generation actually works on backend and saves the asset to MongoDB (~75-90s), but the Kubernetes ingress proxy times out at ~60s and returns HTTP 502 to the client. The asset IS persisted afterwards (verified — found 5.5MB video_b64 in DB and shown in Library tab), but the frontend sees an error during the POST and never navigates to the detail screen, giving the user the impression nothing happened. Frontend e2e flow (login → home stats → create → library → profile → logout) is functional and well-designed.",
+
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/generate/video",
+        "issue": "Synchronous endpoint returns 502 to client after ~60s due to ingress proxy timeout, even though Sora 2 completes in ~75-90s and the asset IS saved to MongoDB. User sees error, but the video appears in /api/assets a moment later. This is the exact UX of 'says making videos but doesn't'.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "POST /api/generate/model",
+        "issue": "When Claude returns an OpenSCAD `difference()` op (e.g. a hollowed pen holder), the JSON primitives block doesn't include subtraction so trimesh stacks cylinders instead of hollowing. Resulting STL is geometrically wrong vs the SCAD code (still printable, but mismatched). Consider executing real OpenSCAD or honoring a 'difference' op in primitives schema."
+      },
+      {
+        "endpoint": "All /api/generate/*",
+        "issue": "EMERGENT_LLM_KEY hit budget cap earlier ('Budget has been exceeded! Current cost: 12.09, Max budget: 11.4' in backend.err.log). Now recovered, but this can intermittently fail image/model gen with a 500."
+      },
+      {
+        "endpoint": "CORS",
+        "issue": "allow_origins=['*'] with allow_credentials=False — fine for current Bearer-token auth, but flag as not production-hardened."
+      }
+    ]
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "create.tsx generateVideo flow",
+        "issue": "When fetch throws (60s ingress 502), user sees a generic error. App should: (a) extend fetch with no timeout / AbortController set very high, (b) poll /api/assets after error to detect the eventually-saved asset, OR (c) implement async job pattern.",
+        "testID": "generate-btn",
+        "priority": "CRITICAL"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Create → Video → navigate to detail",
+        "issue": "POST receives 502 → request() throws → user is shown error toast and is NOT navigated to detail. However a refresh of Library shows the video did get created. Root cause: ingress 60s timeout on a 75-90s call. Fix: async job queue (POST returns {job_id}, frontend polls GET /api/jobs/{job_id}).",
+        "affected_testIDs": ["generate-btn", "kind-video", "prompt-input"]
+      }
+    ],
+    "design_issues": [
+      {
+        "screen": "Login/Home/Library/Profile/Create",
+        "issues": ["Layout is clean, testIDs are present everywhere, mobile spacing/contrast OK, touch targets ≥44px. No issues found."]
+      }
+    ],
+    "react_native_issues": [
+      {
+        "component": "TextInput (login-email/login-password)",
+        "issue": "Minor: console warning 'props.pointerEvents is deprecated. Use style.pointerEvents' — RN deprecation warning, not blocking."
+      }
+    ]
+  },
+
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+
+  "action_items": [
+    "[CRITICAL] Convert POST /api/generate/video to an async job pattern: return {job_id, status:'queued'} immediately, run Sora generation in a background task (BackgroundTasks or asyncio.create_task with a jobs collection), and add GET /api/jobs/{id} that returns {status, progress, asset_id?}. Frontend polls every 5–10s. This is the ONLY robust fix because the Kubernetes ingress 60s timeout cannot be bypassed by raising HTTP/fetch timeouts.",
+    "[CRITICAL] Update frontend src/api.ts generateVideo to use the new job pattern + polling, and update create.tsx to show a progress UI instead of a blocking spinner.",
+    "[HIGH] Top up / monitor EMERGENT_LLM_KEY budget — earlier failures in backend.err.log indicate budget was exceeded.",
+    "[MEDIUM] Improve _build_stl_from_primitives to honor boolean ops (difference/intersection) emitted by Claude SCAD; today the STL geometry can diverge from the displayed SCAD code.",
+    "[LOW] Replace TextInput pointerEvents prop usage to silence the RN deprecation warning."
+  ],
+
+  "critical_code_review_comments": [
+    "server.py: generate_video is fully synchronous from HTTP perspective with up to 900s Sora wait — incompatible with 60s ingress. Must be async/job-based.",
+    "server.py: ADMIN_PASSWORD default 'Admin@123' is OK for dev but should not be committed; password is correctly bcrypt-hashed via $2b$ on seed.",
+    "server.py: CORS uses '*' with credentials=False, fine for Bearer auth.",
+    "server.py: passwords use bcrypt ($2b$), tokens use HS256 JWT with 7-day exp, ObjectId is excluded from responses — auth implementation is correct.",
+    "server.py: seed_admin is NOT idempotent for password updates — if ADMIN_PASSWORD env changes, existing admin row keeps the old hash. Consider upserting password_hash when found.",
+    "frontend api.ts: fetch has no explicit timeout, but underlying ingress imposes ~60s — same root cause. Polling pattern needed."
+  ],
+
+  "updated_files": [
+    "/app/backend/tests/backend_test.py (created)",
+    "/app/test_reports/iteration_1.json (this)",
+    "/app/test_reports/pytest/pytest_results.xml (generated by pytest)"
+  ],
+
+  "success_rate": {"backend": "100% (15/15 functional; 1 self-inflicted test bug fixed)", "frontend": "100% on UI nav + auth + library render; video creation UX broken by ingress timeout"},
+
+  "seed_data_creation": "Admin seeded by backend startup (admin@forgeai.com / Admin@123). Test data created during tests is prefixed with 'test_' or 'TEST'. One TEST image was created and then deleted by the suite; one TEST model and one TEST video remain in the admin library — main agent can prune if desired.",
+
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "After main agent implements async job pattern for /api/generate/video: (1) POST /api/generate/video should return 200 within 5s with {job_id, status:'queued'}; (2) GET /api/jobs/{job_id} should return {status:'queued'|'processing'|'done'|'failed', asset_id?, error?}; (3) Frontend Create flow with VIDEO mode should poll and navigate to /asset/{id} when done. The fully-working backend Sora call (75-90s for 4s/1280x720) produces ~5.5MB MP4 — verified working end-to-end on backend; only the HTTP delivery is broken.",
+
+  "rca_of_issue": "ROOT CAUSE of 'video says making but doesn't': The Kubernetes ingress proxy fronting the preview URL closes any HTTP connection that hasn't received a response within ~60s, returning HTTP 502 to the client. Sora 2 text-to-video takes 75-90s for a 4s 1280x720 clip (verified backend logs: queued → in_progress → 99% → completed → 4.1MB downloaded). The backend completes successfully and persists the asset to MongoDB AFTER the ingress has already 502'd the client. The frontend's fetch() therefore throws, the user is shown an error, and never navigates to the detail screen — even though the asset is now in their Library. REPRO: 1) login as admin, 2) POST /api/generate/video with prompt='ocean wave', duration=4, size=1280x720 — observe 502 at ~60s. 3) Wait 60s. 4) GET /api/assets?asset_type=video — observe the new asset with valid video_b64. MITIGATION: implement async job pattern (POST returns job_id instantly; background task does Sora; frontend polls)."
+}
