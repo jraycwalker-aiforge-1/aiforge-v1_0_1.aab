@@ -124,12 +124,11 @@ export function EnergyLayer({ children, interactive = true }: { children?: React
         style={[StyleSheet.absoluteFill, { backgroundColor: COLORS.energy }, flashStyle]}
       />
 
-      {/* Touch capture (only if interactive) */}
+      {/* Touch capture sits BEHIND children so buttons still get taps */}
       {interactive && (
         <Pressable
           style={StyleSheet.absoluteFill}
           onPressIn={onTouch}
-          pointerEvents="box-none"
         />
       )}
 

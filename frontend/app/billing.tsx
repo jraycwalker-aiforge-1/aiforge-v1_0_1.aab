@@ -7,9 +7,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { Ionicons } from '@expo/vector-icons';
-import { api, COLORS } from '../../src/api';
-import { EnergyLayer, EnergyBox } from '../../src/Energy';
-import { useAuth } from '../../src/auth';
+import { api, COLORS } from '../src/api';
+import { EnergyLayer, EnergyBox } from '../src/Energy';
+import { useAuth } from '../src/auth';
 
 export default function Billing() {
   const router = useRouter();

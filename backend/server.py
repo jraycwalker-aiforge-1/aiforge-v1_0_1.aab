@@ -20,6 +20,37 @@ from pydantic import BaseModel, EmailStr, Field
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 from emergentintegrations.llm.openai.video_generation import OpenAIVideoGeneration
 
+# Azure OpenAI fallback (AI Foundry GPT-4o) — used when Emergent key fails
+try:
+    from openai import AzureOpenAI
+    AZURE_ENDPOINT = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
+    AZURE_KEY = os.environ.get("AZURE_OPENAI_KEY", "")
+    AZURE_DEPLOYMENT = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-aiforge1")
+    AZURE_API_VERSION = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
+    _azure_client = (
+        AzureOpenAI(api_version=AZURE_API_VERSION, azure_endpoint=AZURE_ENDPOINT, api_key=AZURE_KEY)
+        if AZURE_ENDPOINT and AZURE_KEY else None
+    )
+except Exception:
+    _azure_client = None
+
+def azure_chat(system: str, user_text: str, max_tokens: int = 2048) -> Optional[str]:
+    """Synchronous Azure GPT-4o chat completion. Returns text or None on failure."""
+    if not _azure_client:
+        return None
+    try:
+        r = _azure_client.chat.completions.create(
+            model=AZURE_DEPLOYMENT,
+            messages=[{"role": "system", "content": system},
+                      {"role": "user", "content": user_text}],
+            max_tokens=max_tokens, temperature=0.7, top_p=1.0,
+        )
+        return r.choices[0].message.content or ""
+    except Exception as e:
+        log_azure = logging.getLogger("aiforge.azure")
+        log_azure.warning("Azure fallback failed: %s", e)
+        return None
+
 # ----- Config -----
 MONGO_URL = os.environ['MONGO_URL']
 DB_NAME = os.environ['DB_NAME']
@@ -298,13 +329,24 @@ async def _run_video_job(job_id: str, user_id: str, payload: dict):
 async def _run_model_job(job_id: str, user_id: str, payload: dict):
     try:
         await _update_job(job_id, status="running", progress=15)
-        chat = LlmChat(api_key=EMERGENT_LLM_KEY,
-                       session_id=f"scad-{uuid.uuid4()}",
-                       system_message=SCAD_SYSTEM)
-        chat.with_model("anthropic", "claude-sonnet-4-5-20250929")
-        response = await chat.send_message(UserMessage(text=f"Design a 3D-printable object: {payload['prompt']}"))
+        response_text: Optional[str] = None
+        # Try Claude via Emergent first
+        try:
+            chat = LlmChat(api_key=EMERGENT_LLM_KEY,
+                           session_id=f"scad-{uuid.uuid4()}",
+                           system_message=SCAD_SYSTEM)
+            chat.with_model("anthropic", "claude-sonnet-4-5-20250929")
+            r = await chat.send_message(UserMessage(text=f"Design a 3D-printable object: {payload['prompt']}"))
+            response_text = r if isinstance(r, str) else str(r)
+        except Exception as e:
+            log.warning("Claude SCAD gen failed, falling back to Azure GPT-4o: %s", e)
+            response_text = await asyncio.to_thread(
+                azure_chat, SCAD_SYSTEM,
+                f"Design a 3D-printable object: {payload['prompt']}", 3072,
+            )
+            if not response_text:
+                raise RuntimeError("Both Claude and Azure GPT-4o failed for SCAD generation")
         await _update_job(job_id, progress=70)
-        response_text = response if isinstance(response, str) else str(response)
         scad_code = _extract_block(response_text, "scad") or response_text
         json_block = _extract_block(response_text, "json")
         primitives, name = [], payload["prompt"][:40]
@@ -396,7 +438,7 @@ async def chat_assistant(body: ChatReq, bg: BackgroundTasks,
         except HTTPException as e:
             return {"reply": f"⚠️ {e.detail}"}
 
-    # Regular conversation (Claude)
+    # Regular conversation (Claude → Azure GPT-4o fallback)
     try:
         chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=session_id,
                        system_message=(
@@ -408,8 +450,17 @@ async def chat_assistant(body: ChatReq, bg: BackgroundTasks,
         reply = await chat.send_message(UserMessage(text=body.message))
         return {"reply": str(reply)}
     except Exception as e:
-        log.exception("chat failed")
-        raise HTTPException(status_code=500, detail=f"Chat failed: {e}")
+        log.warning("Claude chat failed, trying Azure GPT-4o fallback: %s", e)
+        # Azure GPT-4o fallback
+        az = await asyncio.to_thread(
+            azure_chat,
+            "You are AiForge's AI maker assistant. Help with image/video/3D prompts, OpenSCAD, "
+            "slicer settings. Keep replies under 120 words. No markdown headers.",
+            body.message, 1024,
+        )
+        if az:
+            return {"reply": az, "via": "azure-gpt-4o"}
+        raise HTTPException(status_code=500, detail=f"Chat failed (both providers): {e}")
 
 # ----- Stripe Credits Checkout -----
 CREDIT_PACKS = {

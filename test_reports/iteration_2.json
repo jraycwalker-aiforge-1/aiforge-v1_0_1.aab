@@ -1,0 +1,96 @@
+{
+  "summary": "AiForge backend+frontend re-tested after rename and async-job refactor. Backend pytest: 21 passed, 1 skipped (Stripe checkout — invalid API key in .env). Chat works via Claude (or Azure GPT-4o fallback). 3D model generation now succeeds end-to-end via Azure GPT-4o fallback (async job pattern works — POST /api/generate/model returns job_id, GET /api/jobs/{id} polls to done in ~25-40s, resulting asset has scad_code+stl_b64+stats). Video generation returns a job that ends with status=failed (Emergent budget over) and credits ARE refunded. Image generation hits 500 (Emergent budget over) — credits ARE refunded. Auth, dashboard, billing/packs, assets CRUD, slicer settings, gcode preview all OK. FRONTEND e2e: login → dashboard (9994 credits, recent assets, tabs) → Forge → select MODEL → prompt → FORGE → after ~30s navigates to model detail with SCAD/Slicer/Gcode tabs, dimensions, triangle/vert count, print estimate, COPY SCAD + EXPORT STL buttons. ✓ Chat tab works (real reply). ✓ Library shows all assets with filter chips. ✓ Profile shows credits and links to Billing screen which displays 3 packs (50/200/1000). The billing.tsx import bug is fixed (bundles cleanly). NEW BUG FOUND: STRIPE_API_KEY in /app/backend/.env is the placeholder 'sk_test_emergent' which Stripe rejects with 'Invalid API Key' — the checkout button will fail on tap; needs a real Stripe test key.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/billing/checkout",
+        "issue": "Returns 500 'Stripe error: Invalid API Key provided: sk_test_****gent'. STRIPE_API_KEY in backend/.env is a placeholder. Top-up flow is non-functional in this preview.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "POST /api/generate/image",
+        "issue": "Returns 500 'Image generation failed: ... insufficient_balance ... ' on Emergent key over budget. Credits are refunded as designed. This is EXPECTED per the problem statement; included for visibility."
+      },
+      {
+        "endpoint": "POST /api/generate/video (async job)",
+        "issue": "Job consistently ends with status=failed within ~5-15s due to Emergent budget over. Credits ARE refunded. EXPECTED per problem statement; no DALL-E/Sora fallback configured."
+      },
+      {
+        "endpoint": "All endpoints",
+        "issue": "Backend reads EXPO_PUBLIC_BACKEND_URL from env for tests OK, but server.py CORS still allow_origins=['*'] with allow_credentials=False (Bearer auth so fine, but not prod-hardened)."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Model detail STL viewer (PREVIEW tab)",
+        "issue": "On Expo Web preview, the Three.js-in-WebView region renders as a blank grey rectangle. This is expected (react-native-webview does not render Three.js content in Expo web), but for the user it looks like 'preview missing' in browser. Will work correctly in Expo Go / native build. Reference: /app/frontend/src/StlViewer.tsx",
+        "testID": "preview",
+        "priority": "LOW"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Profile → Billing → Tap pack",
+        "issue": "Tapping any pack card calls POST /api/billing/checkout which returns 500 due to invalid Stripe key in .env. User will see an error alert. Backend code path is correct — only env value is wrong.",
+        "affected_testIDs": ["pack-credits_50", "pack-credits_200", "pack-credits_1000"]
+      }
+    ],
+    "design_issues": [
+      {
+        "screen": "Login/Home/Forge/Assist/Library/Profile/Billing/Model-detail",
+        "issues": [
+          "Layout clean, mobile spacing (8/16/24 grid) followed, contrast OK on dark theme, tab bar touch targets >=44px.",
+          "testID coverage is excellent on every interactive element (login-email, login-password, login-submit, tab-*, kind-*, prompt-input, generate-btn, chat-input, chat-send, filter-*, library-*, goto-billing, logout-btn, pack-*, back-btn, COPY SCAD / EXPORT STL).",
+          "Minor: STL viewer area on web is blank (see ui_bugs)."
+        ]
+      }
+    ],
+    "react_native_issues": [
+      {
+        "component": "TextInput / Pressable across screens",
+        "issue": "Console deprecation warning: 'props.pointerEvents is deprecated. Use style.pointerEvents'. Non-blocking but should be migrated."
+      },
+      {
+        "component": "Various styled components",
+        "issue": "Console deprecation warning: '\"shadow*\" style props are deprecated. Use \"boxShadow\"'. Non-blocking RN web warning."
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "[HIGH] Replace STRIPE_API_KEY in /app/backend/.env with a real Stripe test secret key (starts with sk_test_). Current value 'sk_test_emergent' is a placeholder and Stripe rejects it. After fix, retest POST /api/billing/checkout and frontend pack tap.",
+    "[INFO] Image and Video gen will keep failing until EMERGENT_LLM_KEY budget is topped up. Refund logic IS working correctly — confirmed in tests. Consider implementing Azure DALL-E / Sora-compatible fallback if these need to work without Emergent budget.",
+    "[LOW] Migrate deprecated `props.pointerEvents` → `style.pointerEvents` and `shadow*` props → `boxShadow` to silence RN web deprecation warnings (Expo SDK 51+).",
+    "[LOW] Add a web-only fallback message in StlViewer.tsx ('3D preview available in mobile app') instead of a blank box when running on web."
+  ],
+  "critical_code_review_comments": [
+    "server.py async-job pattern correctly implemented for video & model: POST returns instantly with {job_id, status:'queued'}, BackgroundTasks executes _run_*_job, GET /api/jobs/{id} returns current state. This fixes the prior 60s ingress-timeout bug.",
+    "server.py Azure GPT-4o fallback is correctly wired in chat_assistant() (try Claude → except → asyncio.to_thread(azure_chat,...)) and presumably in _run_model_job (verified end-to-end: chat 3D intent and direct /generate/model both complete via Azure under ~40s).",
+    "server.py credit refund on image-gen exception is implemented (db.users.update_one $inc:+1). Same pattern should exist in _run_video_job on failure — verified via test (credits restored after job failed).",
+    "server.py STRIPE_API_KEY env value is invalid placeholder ('sk_test_emergent'); checkout cannot succeed until replaced.",
+    "server.py: ObjectId is correctly excluded from all responses via {'_id': 0} projections and asset.pop('_id', None).",
+    "frontend api.ts: uses EXPO_PUBLIC_BACKEND_URL — correct.",
+    "frontend testID coverage is comprehensive — every interactive element has a testID. Excellent for automated testing."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py (rewritten — renamed admin email to admin@aiforge.app, added Billing/Chat/Jobs/Async tests)",
+    "/app/test_reports/iteration_2.json (this report)",
+    "/app/test_reports/pytest/pytest_results.xml (regenerated)"
+  ],
+  "success_rate": {
+    "backend": "95% (21/22 functional; 1 skipped due to invalid Stripe key — bug, not test issue)",
+    "frontend": "100% on auth + dashboard + chat + library + profile + billing + 3D model create-to-detail flow"
+  },
+  "seed_data_creation": "Admin already seeded by backend startup (admin@aiforge.app / Admin@123, 9999 credits — now 9994 after this run). Test register users prefixed test_*@aiforge.app. One TEST cylindrical pen holder model was created during tests then cleaned up via DELETE; one additional 'Tiny Coin 25mm' model was created via the frontend e2e test and is still in admin library (main agent may prune).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "After Stripe key is fixed: re-run TestBilling::test_checkout (should return 200 with checkout_url+session_id) and tap a pack in /billing on frontend (should open Stripe-hosted checkout page). All other backend tests already cover the new async-job pattern, chat fallback, billing/packs, and assets CRUD. EMERGENT_LLM_KEY remains over budget so image/video will keep failing — that's expected behavior, not a bug.",
+  "rca_of_issue": "Previous iteration's 'video says making but doesn't' (60s ingress timeout) is FIXED via the async-job pattern. New iteration finds a separate billing issue: STRIPE_API_KEY='sk_test_emergent' is a placeholder string, not a real Stripe test key, so checkout fails with 'Invalid API Key' from the Stripe SDK. Fix: replace value in /app/backend/.env with a real sk_test_ key from the Stripe test dashboard and restart backend."
+}
