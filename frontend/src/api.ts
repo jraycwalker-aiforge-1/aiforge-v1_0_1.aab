@@ -42,6 +42,8 @@ export const api = {
   packs: () => request('/billing/packs'),
   checkout: (pack: string, origin_url: string) => request('/billing/checkout', { method: 'POST', body: JSON.stringify({ pack, origin_url }) }),
   billingStatus: (session_id: string) => request(`/billing/status/${session_id}`),
+  privacy: () => request('/legal/privacy'),
+  deleteAccount: () => request('/auth/account', { method: 'DELETE' }),
 };
 
 // Poll a job until done. Calls onProgress with the job state each tick.

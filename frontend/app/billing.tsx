@@ -31,8 +31,7 @@ export default function Billing() {
       if (Platform.OS === 'web') {
         Linking.openURL(r.checkout_url);
       } else {
-        const result = await WebBrowser.openBrowserAsync(r.checkout_url);
-        // Re-check status on return
+        await WebBrowser.openBrowserAsync(r.checkout_url);
         try {
           const s: any = await api.billingStatus(r.session_id);
           if (s.status === 'completed') {
@@ -46,6 +45,10 @@ export default function Billing() {
     } finally { setBuying(null); }
   };
 
+  const PACK_COLORS: Record<string, string> = {
+    starter: COLORS.primary, creator: COLORS.energy, pro: COLORS.accent, studio: COLORS.energyAlt,
+  };
+
   return (
     <View style={styles.root}>
       <EnergyLayer>
@@ -54,7 +57,7 @@ export default function Billing() {
             <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn} testID="back-btn">
               <Ionicons name="chevron-back" color={COLORS.text} size={24} />
             </TouchableOpacity>
-            <Text style={styles.title}>BILLING</Text>
+            <Text style={styles.title}>CREDITS</Text>
             <View style={styles.iconBtn} />
           </View>
 
@@ -62,23 +65,37 @@ export default function Billing() {
             <EnergyBox style={styles.balanceBox} color={COLORS.accent} intensity={1}>
               <Ionicons name="flash" size={32} color={COLORS.accent} />
               <Text style={styles.balance}>{credits}</Text>
-              <Text style={styles.balanceLbl}>CREDITS</Text>
+              <Text style={styles.balanceLbl}>CREDITS REMAINING</Text>
             </EnergyBox>
 
-            <Text style={styles.dataLabel}>TOP UP</Text>
+            <View style={styles.costRow}>
+              <CostChip icon="image-outline" lbl="IMAGE" cost="1" />
+              <CostChip icon="cube-outline" lbl="3D" cost="2" />
+              <CostChip icon="videocam-outline" lbl="VIDEO" cost="5" />
+            </View>
+
+            <Text style={styles.dataLabel}>CHOOSE A PACK</Text>
 
             {packs.length === 0 ? <ActivityIndicator color={COLORS.energy} /> : (
-              packs.map((p, i) => {
-                const color = i === 0 ? COLORS.primary : i === 1 ? COLORS.energy : COLORS.accent;
+              packs.map((p) => {
+                const color = PACK_COLORS[p.id] || COLORS.primary;
+                const perCredit = (p.amount / p.credits).toFixed(3);
                 return (
-                  <TouchableOpacity key={p.id} onPress={() => buy(p.id)} disabled={!!buying} testID={`pack-${p.id}`}>
-                    <EnergyBox style={styles.pack} color={color} intensity={0.7}>
-                      <View>
-                        <Text style={styles.packName}>{p.name}</Text>
-                        <Text style={styles.packSub}>{p.credits} credits</Text>
+                  <TouchableOpacity key={p.id} onPress={() => buy(p.id)} disabled={!!buying}
+                    testID={`pack-${p.id}`} activeOpacity={0.85}>
+                    <EnergyBox style={styles.pack} color={color} intensity={p.best ? 1.2 : 0.6}>
+                      {p.best && (
+                        <View style={[styles.bestBadge, { backgroundColor: color }]}>
+                          <Text style={styles.bestText}>★ POPULAR</Text>
+                        </View>
+                      )}
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.packName, { color }]}>{p.name?.toUpperCase()}</Text>
+                        <Text style={styles.packCredits}>{p.credits} <Text style={styles.packCreditsLbl}>credits</Text></Text>
+                        <Text style={styles.packTagline}>{p.tagline}  ·  ${perCredit}/cr</Text>
                       </View>
                       <View style={styles.packRight}>
-                        <Text style={[styles.packPrice, { color }]}>${(p.amount/100).toFixed(2)}</Text>
+                        <Text style={[styles.packPrice, { color }]}>${p.amount.toFixed(2)}</Text>
                         {buying === p.id ? <ActivityIndicator color={color} /> :
                           <Ionicons name="chevron-forward" color={color} size={20} />}
                       </View>
@@ -89,11 +106,21 @@ export default function Billing() {
             )}
 
             <Text style={styles.note}>
-              💳 Test mode: use card 4242 4242 4242 4242, any future expiry, any CVC.
+              💳 Test mode · 4242 4242 4242 4242 · any future expiry · any CVC
             </Text>
           </ScrollView>
         </SafeAreaView>
       </EnergyLayer>
+    </View>
+  );
+}
+
+function CostChip({ icon, lbl, cost }: any) {
+  return (
+    <View style={styles.chip}>
+      <Ionicons name={icon} size={14} color={COLORS.textDim} />
+      <Text style={styles.chipLbl}>{lbl}</Text>
+      <Text style={styles.chipCost}>{cost}cr</Text>
     </View>
   );
 }
@@ -104,14 +131,22 @@ const styles = StyleSheet.create({
   title: { color: COLORS.text, letterSpacing: 3, fontWeight: '800', fontSize: 12 },
   iconBtn: { padding: 8, minWidth: 40 },
   content: { padding: 20, paddingBottom: 40 },
-  balanceBox: { padding: 28, alignItems: 'center', marginBottom: 20 },
-  balance: { color: COLORS.text, fontSize: 48, fontWeight: '900', marginTop: 8 },
-  balanceLbl: { color: COLORS.textDim, fontSize: 11, letterSpacing: 3, marginTop: 4 },
-  dataLabel: { color: COLORS.textDim, fontSize: 10, letterSpacing: 2, marginBottom: 12, marginTop: 10 },
-  pack: { padding: 18, marginBottom: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  packName: { color: COLORS.text, fontSize: 16, fontWeight: '700' },
-  packSub: { color: COLORS.textDim, fontSize: 12, marginTop: 4 },
-  packRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  packPrice: { fontSize: 20, fontWeight: '800' },
+  balanceBox: { padding: 28, alignItems: 'center', marginBottom: 16 },
+  balance: { color: COLORS.text, fontSize: 52, fontWeight: '900', marginTop: 8 },
+  balanceLbl: { color: COLORS.textDim, fontSize: 10, letterSpacing: 3, marginTop: 4 },
+  costRow: { flexDirection: 'row', justifyContent: 'space-around', marginBottom: 18 },
+  chip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: COLORS.surface, borderRadius: 3, borderWidth: 1, borderColor: COLORS.border },
+  chipLbl: { color: COLORS.textDim, fontSize: 10, letterSpacing: 1.5, fontWeight: '700' },
+  chipCost: { color: COLORS.accent, fontSize: 11, fontWeight: '800' },
+  dataLabel: { color: COLORS.textDim, fontSize: 10, letterSpacing: 2, marginBottom: 12, marginTop: 6 },
+  pack: { padding: 18, marginBottom: 10, flexDirection: 'row', alignItems: 'center', position: 'relative' },
+  bestBadge: { position: 'absolute', top: -8, right: 14, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 2 },
+  bestText: { color: '#000', fontSize: 9, fontWeight: '900', letterSpacing: 2 },
+  packName: { fontSize: 11, fontWeight: '800', letterSpacing: 2.5 },
+  packCredits: { color: COLORS.text, fontSize: 22, fontWeight: '800', marginTop: 4 },
+  packCreditsLbl: { fontSize: 12, color: COLORS.textDim, fontWeight: '500' },
+  packTagline: { color: COLORS.textDim, fontSize: 11, marginTop: 2 },
+  packRight: { alignItems: 'flex-end', gap: 8 },
+  packPrice: { fontSize: 22, fontWeight: '900' },
   note: { color: COLORS.textMuted, fontSize: 11, marginTop: 16, textAlign: 'center' },
 });

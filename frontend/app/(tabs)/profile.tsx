@@ -1,15 +1,30 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../src/auth';
-import { COLORS } from '../../src/api';
+import { api, COLORS } from '../../src/api';
 import { EnergyLayer, EnergyBox } from '../../src/Energy';
 
 export default function Profile() {
   const { user, logout } = useAuth();
   const router = useRouter();
+
+  const onDeleteAccount = () => {
+    Alert.alert(
+      'Delete account?',
+      'This permanently deletes your account and ALL of your images, videos, 3D models, and credits. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete forever', style: 'destructive', onPress: async () => {
+          try { await api.deleteAccount(); await logout(); }
+          catch (e: any) { Alert.alert('Error', e.message); }
+        } },
+      ],
+    );
+  };
+
   return (
     <View style={styles.root}>
       <EnergyLayer>
@@ -30,7 +45,7 @@ export default function Profile() {
                 <Ionicons name="flash" size={28} color={COLORS.accent} />
                 <View style={{ flex: 1, marginLeft: 14 }}>
                   <Text style={styles.creditNum}>{user?.credits ?? 0} <Text style={styles.creditLbl}>CREDITS</Text></Text>
-                  <Text style={styles.creditSub}>Tap to top up</Text>
+                  <Text style={styles.creditSub}>Tap to top up · from $9.99</Text>
                 </View>
                 <Ionicons name="chevron-forward" size={22} color={COLORS.accent} />
               </EnergyBox>
@@ -38,10 +53,11 @@ export default function Profile() {
 
             <Text style={styles.dataLabel}>INTEGRATIONS</Text>
             <View style={styles.list}>
-              <Row icon="image-outline" title="Gemini Nano Banana" sub="Image generation · 1 credit" color={COLORS.primary} />
-              <Row icon="videocam-outline" title="Sora 2" sub="Video generation · 5 credits" color={COLORS.green} />
-              <Row icon="cube-outline" title="Claude Sonnet 4.5" sub="3D / SCAD generation · 2 credits" color={COLORS.accent} />
-              <Row icon="card-outline" title="Stripe" sub="Payments (test mode)" color={COLORS.energy} />
+              <Row icon="image-outline" title="Gemini Nano Banana" sub="Image · 1 credit" color={COLORS.primary} />
+              <Row icon="videocam-outline" title="Sora 2" sub="Video · 5 credits" color={COLORS.green} />
+              <Row icon="cube-outline" title="Claude Sonnet 4.5" sub="3D / SCAD · 2 credits" color={COLORS.accent} />
+              <Row icon="flash-outline" title="Azure GPT-4o (AI Foundry)" sub="Fallback chat + SCAD" color={COLORS.energyAlt} />
+              <Row icon="card-outline" title="Stripe" sub="Test-mode payments" color={COLORS.energy} />
             </View>
 
             <Text style={styles.dataLabel}>SLICER DEFAULTS</Text>
@@ -51,10 +67,23 @@ export default function Profile() {
               <Row icon="thermometer-outline" title="Nozzle" sub="210°C" />
             </View>
 
-            <TouchableOpacity style={styles.logoutBtn} onPress={logout} testID="logout-btn">
-              <Ionicons name="log-out-outline" color={COLORS.danger} size={18} />
-              <Text style={styles.logoutText}>SIGN OUT</Text>
+            <Text style={styles.dataLabel}>LEGAL & ACCOUNT</Text>
+            <View style={styles.list}>
+              <TouchableOpacity onPress={() => router.push('/privacy')} testID="goto-privacy" activeOpacity={0.7}>
+                <Row icon="shield-checkmark-outline" title="Privacy Policy" sub="How we use your data" color={COLORS.energy} chevron />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={logout} testID="logout-row" activeOpacity={0.7}>
+                <Row icon="log-out-outline" title="Sign Out" sub="See you next forge" color={COLORS.textDim} chevron />
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity style={styles.dangerBtn} onPress={onDeleteAccount} testID="delete-account-btn" activeOpacity={0.85}>
+              <Ionicons name="trash-outline" color={COLORS.danger} size={18} />
+              <Text style={styles.dangerText}>DELETE ACCOUNT</Text>
             </TouchableOpacity>
+            <Text style={styles.dangerNote}>
+              Permanently erases your account and every asset you've created.
+            </Text>
 
             <Text style={styles.footer}>AiForge · v1.0</Text>
           </ScrollView>
@@ -64,7 +93,7 @@ export default function Profile() {
   );
 }
 
-function Row({ icon, title, sub, color = COLORS.textDim }: any) {
+function Row({ icon, title, sub, color = COLORS.textDim, chevron = false }: any) {
   return (
     <View style={styles.row}>
       <View style={[styles.rowIcon, { backgroundColor: color + '22', borderColor: color + '88' }]}>
@@ -74,6 +103,7 @@ function Row({ icon, title, sub, color = COLORS.textDim }: any) {
         <Text style={styles.rowTitle}>{title}</Text>
         <Text style={styles.rowSub}>{sub}</Text>
       </View>
+      {chevron && <Ionicons name="chevron-forward" size={18} color={COLORS.textDim} />}
     </View>
   );
 }

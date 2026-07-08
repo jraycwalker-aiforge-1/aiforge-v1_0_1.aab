@@ -10,6 +10,9 @@ from typing import Optional, List, Literal, Any
 import bcrypt
 import jwt
 import stripe
+from emergentintegrations.payments.stripe.checkout import (
+    StripeCheckout, CheckoutSessionRequest, CheckoutStatusResponse,
+)
 import trimesh
 
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Header, BackgroundTasks, Request
@@ -131,7 +134,7 @@ class ChatReq(BaseModel):
     session_id: Optional[str] = None
 
 class CheckoutReq(BaseModel):
-    pack: Literal["credits_50", "credits_200", "credits_1000"]
+    pack: Literal["starter", "creator", "pro", "studio"]
     origin_url: str  # frontend origin so we redirect back
 
 # ----- Credit helpers -----
@@ -462,11 +465,12 @@ async def chat_assistant(body: ChatReq, bg: BackgroundTasks,
             return {"reply": az, "via": "azure-gpt-4o"}
         raise HTTPException(status_code=500, detail=f"Chat failed (both providers): {e}")
 
-# ----- Stripe Credits Checkout -----
+# ----- Stripe Credits Checkout (uses emergentintegrations wrapper) -----
 CREDIT_PACKS = {
-    "credits_50": {"credits": 50, "amount": 499, "name": "50 Credits"},     # $4.99
-    "credits_200": {"credits": 200, "amount": 1499, "name": "200 Credits"}, # $14.99
-    "credits_1000": {"credits": 1000, "amount": 4999, "name": "1000 Credits"}, # $49.99
+    "starter": {"credits": 5,   "amount": 9.99,   "name": "Starter", "tagline": "Try it out"},
+    "creator": {"credits": 25,  "amount": 39.99,  "name": "Creator", "tagline": "Most popular", "best": True},
+    "pro":     {"credits": 100, "amount": 129.99, "name": "Pro",     "tagline": "Heavy maker"},
+    "studio":  {"credits": 500, "amount": 499.99, "name": "Studio",  "tagline": "Best value"},
 }
 
 @api.get("/billing/packs")
@@ -474,60 +478,143 @@ async def list_packs():
     return [{"id": k, **v} for k, v in CREDIT_PACKS.items()]
 
 @api.post("/billing/checkout")
-async def create_checkout(body: CheckoutReq, user: dict = Depends(get_current_user)):
+async def create_checkout(body: CheckoutReq, request: Request,
+                          user: dict = Depends(get_current_user)):
     pack = CREDIT_PACKS.get(body.pack)
     if not pack:
         raise HTTPException(status_code=400, detail="Unknown pack")
     if not STRIPE_API_KEY:
         raise HTTPException(status_code=500, detail="Stripe not configured")
     origin = body.origin_url.rstrip("/")
+    webhook_url = f"{str(request.base_url).rstrip('/')}/api/billing/webhook"
     try:
-        session = stripe.checkout.Session.create(
-            mode="payment",
-            line_items=[{
-                "price_data": {
-                    "currency": "usd",
-                    "product_data": {"name": f"AiForge {pack['name']}"},
-                    "unit_amount": pack["amount"],
-                },
-                "quantity": 1,
-            }],
+        checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
+        session = await checkout.create_checkout_session(CheckoutSessionRequest(
+            amount=float(pack["amount"]),
+            currency="usd",
             success_url=f"{origin}/billing/return?session_id={{CHECKOUT_SESSION_ID}}",
             cancel_url=f"{origin}/billing/return?canceled=1",
-            metadata={"user_id": user["id"], "pack": body.pack, "credits": str(pack["credits"])},
-        )
+            metadata={"user_id": user["id"], "pack": body.pack,
+                      "credits": str(pack["credits"]), "pack_name": pack["name"]},
+        ))
         await db.payments.insert_one({
             "id": str(uuid.uuid4()),
-            "user_id": user["id"], "session_id": session.id, "pack": body.pack,
-            "credits": pack["credits"], "amount": pack["amount"],
-            "status": "pending",
+            "user_id": user["id"], "session_id": session.session_id,
+            "pack": body.pack, "credits": pack["credits"],
+            "amount": float(pack["amount"]), "status": "pending",
             "created_at": datetime.now(timezone.utc).isoformat()})
-        return {"checkout_url": session.url, "session_id": session.id}
+        return {"checkout_url": session.url, "session_id": session.session_id}
     except Exception as e:
         log.exception("stripe failed")
         raise HTTPException(status_code=500, detail=f"Stripe error: {e}")
 
 @api.get("/billing/status/{session_id}")
-async def billing_status(session_id: str, user: dict = Depends(get_current_user)):
-    try:
-        session = stripe.checkout.Session.retrieve(session_id)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+async def billing_status(session_id: str, request: Request,
+                         user: dict = Depends(get_current_user)):
     payment = await db.payments.find_one({"session_id": session_id, "user_id": user["id"]}, {"_id": 0})
     if not payment:
         raise HTTPException(status_code=404, detail="Payment not found")
-    if session.payment_status == "paid" and payment["status"] != "completed":
-        # Atomically credit user (idempotent via payment status)
-        upd = await db.payments.update_one(
-            {"session_id": session_id, "status": {"$ne": "completed"}},
-            {"$set": {"status": "completed",
-                      "completed_at": datetime.now(timezone.utc).isoformat()}})
-        if upd.modified_count == 1:
-            await db.users.update_one({"id": user["id"]},
-                                      {"$inc": {"credits": payment["credits"]}})
-            payment["status"] = "completed"
-    return {"payment_status": session.payment_status,
-            "status": payment["status"], "credits_granted": payment["credits"]}
+    try:
+        webhook_url = f"{str(request.base_url).rstrip('/')}/api/billing/webhook"
+        checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
+        status_obj: CheckoutStatusResponse = await checkout.get_checkout_status(session_id)
+        if status_obj.payment_status == "paid" and payment["status"] != "completed":
+            upd = await db.payments.update_one(
+                {"session_id": session_id, "status": {"$ne": "completed"}},
+                {"$set": {"status": "completed",
+                          "completed_at": datetime.now(timezone.utc).isoformat()}})
+            if upd.modified_count == 1:
+                await db.users.update_one({"id": user["id"]},
+                                          {"$inc": {"credits": payment["credits"]}})
+                payment["status"] = "completed"
+        return {"payment_status": status_obj.payment_status,
+                "status": payment["status"], "credits_granted": payment["credits"]}
+    except HTTPException: raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api.post("/billing/webhook")
+async def billing_webhook(request: Request):
+    sig = request.headers.get("stripe-signature", "")
+    body = await request.body()
+    try:
+        webhook_url = f"{str(request.base_url).rstrip('/')}/api/billing/webhook"
+        checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
+        event = await checkout.handle_webhook(body, sig)
+        if event.event_type == "checkout.session.completed" and event.payment_status == "paid":
+            payment = await db.payments.find_one({"session_id": event.session_id}, {"_id": 0})
+            if payment and payment.get("status") != "completed":
+                upd = await db.payments.update_one(
+                    {"session_id": event.session_id, "status": {"$ne": "completed"}},
+                    {"$set": {"status": "completed",
+                              "completed_at": datetime.now(timezone.utc).isoformat()}})
+                if upd.modified_count == 1:
+                    await db.users.update_one({"id": payment["user_id"]},
+                                              {"$inc": {"credits": payment["credits"]}})
+        return {"ok": True}
+    except Exception as e:
+        log.warning("webhook err: %s", e)
+        return {"ok": False, "error": str(e)}
+
+# ----- Account / Privacy -----
+PRIVACY_POLICY = """# AiForge Privacy Policy
+
+Last updated: February 2026
+
+## Summary
+We collect the minimum needed to run AiForge. Your prompts and generated content are stored
+in your private library and never shared.
+
+## Data we collect
+- **Account**: email + display name (used to sign you in)
+- **Authentication**: hashed password (bcrypt) — never stored in plaintext
+- **Generated content**: images, videos, 3D models you create, plus the prompts you typed
+- **Billing**: Stripe handles all card data — we only see your purchase history (pack, date, status)
+- **Usage**: credit balance and history of jobs (queued/running/completed)
+
+## How AI providers see your data
+- Image generation: Google (Gemini Nano Banana)
+- Video generation: OpenAI (Sora 2)
+- 3D / SCAD / chat: Anthropic (Claude Sonnet 4.5) or Microsoft Azure OpenAI (GPT-4o, fallback)
+Each provider receives only your prompt text. We do not send your account email or personal data to them.
+
+## How we use it
+- To generate the content you asked for
+- To bill you for credit packs you purchase
+- To show you your library across devices
+
+## What we DO NOT do
+- We do NOT train any AI on your prompts
+- We do NOT show your content to other users
+- We do NOT sell your data to anyone
+- We do NOT use cookies for tracking
+
+## Your rights
+- **Export**: every asset can be exported (PNG, MP4, STL) via the share sheet
+- **Delete one asset**: tap the trash icon on any asset detail screen
+- **Delete your whole account + all data**: Profile → Delete Account (permanent, irreversible)
+- **Email us**: privacy@aiforge.app for any other request
+
+## Children
+AiForge is not intended for users under 13.
+
+## Changes
+We will notify you in-app if this policy changes.
+"""
+
+@api.get("/legal/privacy")
+async def get_privacy():
+    return {"policy": PRIVACY_POLICY, "updated_at": "2026-02-04"}
+
+@api.delete("/auth/account")
+async def delete_account(user: dict = Depends(get_current_user)):
+    """Permanently delete user + all their assets, jobs, payments. Irreversible."""
+    uid = user["id"]
+    await db.assets.delete_many({"user_id": uid})
+    await db.jobs.delete_many({"user_id": uid})
+    await db.payments.delete_many({"user_id": uid})
+    await db.users.delete_one({"id": uid})
+    return {"ok": True, "deleted_user_id": uid}
 
 # ----- Library & asset CRUD -----
 @api.get("/assets")
