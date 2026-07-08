@@ -72,6 +72,9 @@ export default function Profile() {
               <TouchableOpacity onPress={() => router.push('/privacy')} testID="goto-privacy" activeOpacity={0.7}>
                 <Row icon="shield-checkmark-outline" title="Privacy Policy" sub="How we use your data" color={COLORS.energy} chevron />
               </TouchableOpacity>
+              <TouchableOpacity onPress={() => router.push('/terms')} testID="goto-terms" activeOpacity={0.7}>
+                <Row icon="document-text-outline" title="Terms of Service" sub="Rules of the road" color={COLORS.energyAlt} chevron />
+              </TouchableOpacity>
               <TouchableOpacity onPress={logout} testID="logout-row" activeOpacity={0.7}>
                 <Row icon="log-out-outline" title="Sign Out" sub="See you next forge" color={COLORS.textDim} chevron />
               </TouchableOpacity>

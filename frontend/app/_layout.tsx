@@ -28,8 +28,9 @@ function Gate() {
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="model/[id]" />
       <Stack.Screen name="asset/[id]" />
-            <Stack.Screen name="privacy" />
-            <Stack.Screen name="billing" />
+      <Stack.Screen name="privacy" />
+      <Stack.Screen name="terms" />
+      <Stack.Screen name="billing" />
     </Stack>
   );
 }

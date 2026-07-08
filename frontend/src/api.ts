@@ -43,6 +43,7 @@ export const api = {
   checkout: (pack: string, origin_url: string) => request('/billing/checkout', { method: 'POST', body: JSON.stringify({ pack, origin_url }) }),
   billingStatus: (session_id: string) => request(`/billing/status/${session_id}`),
   privacy: () => request('/legal/privacy'),
+  terms: () => request('/legal/terms'),
   deleteAccount: () => request('/auth/account', { method: 'DELETE' }),
 };
 

@@ -8,9 +8,19 @@
     "scheme": "aiforge",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
+    "primaryColor": "#2563EB",
+    "description": "AI generator app for images, videos and 3D-printable STL/SCAD models. Design, slice, and export to any slicer app.",
+    "androidStatusBar": {
+      "backgroundColor": "#05050A",
+      "barStyle": "light-content"
+    },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.aiforge.app"
+      "bundleIdentifier": "com.aiforge.app",
+      "buildNumber": "1",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -18,7 +28,20 @@
         "backgroundColor": "#05050A"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.aiforge.app"
+      "package": "com.aiforge.app",
+      "versionCode": 1,
+      "permissions": [
+        "android.permission.INTERNET"
+      ],
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.CAMERA",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.READ_CONTACTS",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -28,6 +51,7 @@
     "plugins": [
       "expo-router",
       "expo-video",
+      "expo-web-browser",
       [
         "expo-splash-screen",
         {

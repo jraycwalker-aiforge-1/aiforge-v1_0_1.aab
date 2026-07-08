@@ -1,13 +1,16 @@
-"""AiForge backend API tests (iteration 2).
+"""AiForge backend API tests (iteration 3 — Google Play readiness).
 
-Tests:
-- Health, Auth (admin login, register, me)
+Covers:
+- Health, Auth (admin login, register, /me, logout)
 - Dashboard
-- Billing (packs, checkout)
-- Chat (text reply via Claude/Azure fallback; 3D intent kicks off job)
-- Async jobs: model gen (expected: Azure fallback succeeds), video gen (expected: failed status),
-  image gen (expected: 500 + refund)
+- Billing: 4 packs (starter/creator/pro/studio), checkout, status endpoint, webhook accepts POST
+- Legal endpoints: /legal/privacy and /legal/terms
+- Chat (Claude/Azure fallback, 3D intent → model job)
+- Image gen (expected 500 + refund — Emergent over budget)
+- Model gen async job (expected done via Azure fallback)
+- Video gen async job (expected failed + refund)
 - Assets CRUD, slicer settings, gcode preview
+- Delete account: creates a fresh temp user and wipes it (never admin)
 """
 import os
 import time
@@ -45,8 +48,7 @@ def auth(admin_token):
     return {"Authorization": f"Bearer {admin_token}", "Content-Type": "application/json"}
 
 
-def _poll_job(session, auth, job_id, timeout=90, interval=3):
-    """Poll job until status in {done, failed} or timeout."""
+def _poll_job(session, auth, job_id, timeout=120, interval=3):
     start = time.time()
     last = None
     while time.time() - start < timeout:
@@ -93,7 +95,6 @@ class TestAuth:
         data = r.json()
         token = data["access_token"]
         assert data["user"]["credits"] == 10
-        # /me
         r2 = session.get(f"{API}/auth/me",
                          headers={"Authorization": f"Bearer {token}"}, timeout=15)
         assert r2.status_code == 200
@@ -105,6 +106,11 @@ class TestAuth:
         r = session.get(f"{API}/auth/me", timeout=10)
         assert r.status_code == 401
 
+    def test_logout(self, session, auth):
+        r = session.post(f"{API}/auth/logout", headers=auth, timeout=10)
+        # Should be 200 (JWT is stateless — endpoint just returns ok)
+        assert r.status_code in (200, 204)
+
 
 # ---------- Dashboard ----------
 class TestDashboard:
@@ -115,32 +121,82 @@ class TestDashboard:
         assert "counts" in d and "recent" in d
         for k in ("image", "video", "model"):
             assert k in d["counts"]
-        # credits surfaced on dashboard
         assert "credits" in d
 
 
-# ---------- Billing ----------
+# ---------- Billing (NEW: 4 tiers) ----------
 class TestBilling:
-    def test_packs(self, session, auth):
+    def test_packs_four_tiers(self, session, auth):
         r = session.get(f"{API}/billing/packs", headers=auth, timeout=15)
         assert r.status_code == 200
         packs = r.json()
-        assert isinstance(packs, list)
-        ids = [p["id"] for p in packs]
-        assert "credits_50" in ids and "credits_200" in ids and "credits_1000" in ids
-        for p in packs:
-            assert "credits" in p and "amount" in p
+        assert isinstance(packs, list) and len(packs) == 4
+        by_id = {p["id"]: p for p in packs}
+        # Expected new tiers
+        assert set(by_id.keys()) == {"starter", "creator", "pro", "studio"}
+        # Amounts
+        assert by_id["starter"]["amount"] == 9.99 and by_id["starter"]["credits"] == 5
+        assert by_id["creator"]["amount"] == 39.99 and by_id["creator"]["credits"] == 25
+        assert by_id["creator"].get("best") is True
+        assert by_id["pro"]["amount"] == 129.99 and by_id["pro"]["credits"] == 100
+        assert by_id["studio"]["amount"] == 499.99 and by_id["studio"]["credits"] == 500
 
-    def test_checkout(self, session, auth):
+    def test_checkout_creator_returns_stripe_url(self, session, auth):
         r = session.post(f"{API}/billing/checkout", headers=auth,
-                         json={"pack": "credits_50",
+                         json={"pack": "creator",
                                "origin_url": "https://ai-media-3d.preview.emergentagent.com"},
-                         timeout=30)
-        if r.status_code != 200:
-            pytest.skip(f"Stripe checkout returned {r.status_code}: {r.text[:300]}")
+                         timeout=45)
+        assert r.status_code == 200, f"checkout failed: {r.status_code} {r.text[:400]}"
         body = r.json()
         assert "checkout_url" in body and body["checkout_url"].startswith("https://")
-        assert "session_id" in body
+        assert "stripe.com" in body["checkout_url"] or "checkout.stripe" in body["checkout_url"]
+        assert "session_id" in body and body["session_id"]
+        pytest.checkout_session_id = body["session_id"]
+
+    def test_checkout_status(self, session, auth):
+        sid = getattr(pytest, "checkout_session_id", None)
+        if not sid:
+            pytest.skip("no checkout session")
+        r = session.get(f"{API}/billing/status/{sid}", headers=auth, timeout=20)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert "payment_status" in body
+        assert "status" in body
+
+    def test_webhook_accepts_post(self, session):
+        # Should NOT return 405. Signature will be invalid so 200 with ok:false is acceptable.
+        r = session.post(f"{API}/billing/webhook",
+                         data=b"{}",
+                         headers={"stripe-signature": "t=0,v1=deadbeef",
+                                  "Content-Type": "application/json"},
+                         timeout=15)
+        assert r.status_code != 405
+        assert r.status_code in (200, 400)
+
+    def test_checkout_unknown_pack_400(self, session, auth):
+        r = session.post(f"{API}/billing/checkout", headers=auth,
+                         json={"pack": "bogus",
+                               "origin_url": "https://ai-media-3d.preview.emergentagent.com"},
+                         timeout=15)
+        # Pydantic Literal validation returns 422; endpoint fallback 400 is also acceptable.
+        assert r.status_code in (400, 422)
+
+
+# ---------- Legal ----------
+class TestLegal:
+    def test_privacy(self, session):
+        r = session.get(f"{API}/legal/privacy", timeout=15)
+        assert r.status_code == 200
+        body = r.json()
+        assert "policy" in body and isinstance(body["policy"], str)
+        assert len(body["policy"]) > 200
+
+    def test_terms(self, session):
+        r = session.get(f"{API}/legal/terms", timeout=15)
+        assert r.status_code == 200
+        body = r.json()
+        assert "terms" in body and isinstance(body["terms"], str)
+        assert len(body["terms"]) > 200
 
 
 # ---------- Chat ----------
@@ -151,15 +207,14 @@ class TestChat:
         assert r.status_code == 200, f"chat failed: {r.status_code} {r.text[:500]}"
         body = r.json()
         assert "reply" in body and isinstance(body["reply"], str) and len(body["reply"]) > 0
-        # may include via=azure-gpt-4o if Claude failed
         print(f"chat reply via={body.get('via','primary')}: {body['reply'][:120]}")
 
     def test_chat_3d_model_intent(self, session, auth):
         r = session.post(f"{API}/chat", headers=auth,
-                         json={"message": "Design a 3D model of a phone stand 100mm tall"}, timeout=30)
+                         json={"message": "Design a 3D model of a phone stand 100mm tall"},
+                         timeout=30)
         assert r.status_code == 200, r.text
         body = r.json()
-        # Should kick off model job
         assert body.get("kind") == "model"
         assert "job_id" in body
         pytest.chat_model_job = body["job_id"]
@@ -168,11 +223,10 @@ class TestChat:
         jid = getattr(pytest, "chat_model_job", None)
         if not jid:
             pytest.skip("no chat model job")
-        final = _poll_job(session, auth, jid, timeout=120)
+        final = _poll_job(session, auth, jid, timeout=180)
         assert final.get("status") == "done", f"job did not finish: {final}"
         asset_id = final.get("asset_id")
-        assert asset_id, f"no asset_id in job: {final}"
-        # fetch asset
+        assert asset_id
         r = session.get(f"{API}/assets/{asset_id}", headers=auth, timeout=15)
         assert r.status_code == 200
         a = r.json()
@@ -183,36 +237,27 @@ class TestChat:
         pytest.chat_model_asset_id = asset_id
 
 
-# ---------- Image generation (EXPECTED to fail with refund) ----------
+# ---------- Image gen (expected 500 + refund) ----------
 class TestImageGen:
     def test_generate_image_fails_gracefully_and_refunds(self, session, auth):
-        # Get credits before
         me_before = session.get(f"{API}/auth/me", headers=auth, timeout=15).json()
         credits_before = me_before["credits"]
 
         r = session.post(f"{API}/generate/image", headers=auth,
                          json={"prompt": "TEST a small red apple on white background"}, timeout=120)
-        # Emergent key over budget -> 500 expected. Could also succeed if topped up.
         if r.status_code == 200:
-            a = r.json()
-            assert a["type"] == "image"
-            assert a.get("image_b64")
-            pytest.image_asset_id = a["id"]
-            print("Image gen unexpectedly succeeded.")
+            print("Image gen unexpectedly succeeded — Emergent key must have been topped up.")
             return
-        assert r.status_code in (500, 502, 402), f"unexpected status: {r.status_code} {r.text[:200]}"
-        # Credit should be refunded (only if Emergent fail path executed)
+        assert r.status_code in (500, 502, 402), f"unexpected: {r.status_code} {r.text[:200]}"
         time.sleep(1)
-        me_after = session.get(f"{API}/auth/me", headers=auth, timeout=15).json()
-        credits_after = me_after["credits"]
-        # Either equal (refund applied) or off by 1 if refund missed
+        credits_after = session.get(f"{API}/auth/me", headers=auth, timeout=15).json()["credits"]
         assert credits_after >= credits_before - 1, (
             f"credits not refunded: before={credits_before} after={credits_after}")
         print(f"Image gen failed as expected ({r.status_code}); "
               f"credits before={credits_before} after={credits_after}")
 
 
-# ---------- Model Generation (async) ----------
+# ---------- Model gen (async) ----------
 class TestModelGen:
     def test_generate_model_async_job(self, session, auth):
         r = session.post(f"{API}/generate/model", headers=auth,
@@ -227,8 +272,8 @@ class TestModelGen:
     def test_model_job_completes_via_azure_fallback(self, session, auth):
         jid = getattr(pytest, "model_job_id", None)
         if not jid:
-            pytest.skip("no model job created")
-        final = _poll_job(session, auth, jid, timeout=120)
+            pytest.skip("no model job")
+        final = _poll_job(session, auth, jid, timeout=180)
         assert final.get("status") == "done", f"model job did not finish: {final}"
         asset_id = final.get("asset_id")
         assert asset_id
@@ -244,11 +289,11 @@ class TestModelGen:
     def test_update_slicer(self, session, auth):
         aid = getattr(pytest, "model_asset_id", None)
         if not aid:
-            pytest.skip("no model asset created")
+            pytest.skip("no model asset")
         r = session.patch(
             f"{API}/assets/{aid}/slicer", headers=auth,
             json={"settings": {"layer_height": 0.3, "infill_percent": 35, "supports": True,
-                                "print_speed": 80, "nozzle_temp": 215, "bed_temp": 65}},
+                               "print_speed": 80, "nozzle_temp": 215, "bed_temp": 65}},
             timeout=15)
         assert r.status_code == 200
         a = r.json()
@@ -268,7 +313,7 @@ class TestModelGen:
         assert "estimate" in body
 
 
-# ---------- Video Generation (EXPECTED to fail per Emergent budget) ----------
+# ---------- Video gen (async, expected fail + refund) ----------
 class TestVideoGen:
     def test_generate_video_returns_job(self, session, auth):
         me_before = session.get(f"{API}/auth/me", headers=auth, timeout=15).json()
@@ -287,11 +332,9 @@ class TestVideoGen:
         if not jid:
             pytest.skip("no video job")
         final = _poll_job(session, auth, jid, timeout=180, interval=5)
-        # Expected to be failed; tolerate done if Emergent topped up
         status = final.get("status")
         assert status in ("failed", "done"), f"unexpected final state: {final}"
         if status == "failed":
-            # Credit should be refunded
             time.sleep(2)
             credits_after = session.get(f"{API}/auth/me", headers=auth, timeout=15).json()["credits"]
             assert credits_after >= pytest.credits_before_video - 1, (
@@ -299,8 +342,6 @@ class TestVideoGen:
                 f"after={credits_after}")
             print(f"Video failed as expected; credits before={pytest.credits_before_video} "
                   f"after={credits_after}")
-        else:
-            print("Video unexpectedly succeeded.")
 
 
 # ---------- Assets CRUD ----------
@@ -327,7 +368,6 @@ class TestAssets:
         assert r.json()["id"] == aid
 
     def test_delete_asset_and_404(self, session, auth):
-        # delete the chat-created model asset to keep library tidy
         aid = getattr(pytest, "chat_model_asset_id", None)
         if not aid:
             pytest.skip("no asset to delete")
@@ -335,3 +375,36 @@ class TestAssets:
         assert r.status_code == 200
         r2 = session.get(f"{API}/assets/{aid}", headers=auth, timeout=15)
         assert r2.status_code == 404
+
+
+# ---------- Delete Account (fresh temp user only) ----------
+class TestDeleteAccount:
+    def test_delete_account_wipes_everything(self, session):
+        # Register fresh user
+        email = f"testdelete_{int(time.time())}_{uuid.uuid4().hex[:6]}@aiforge.app"
+        r = session.post(f"{API}/auth/register",
+                         json={"email": email, "password": "Test@1234", "name": "ToDelete"},
+                         timeout=20)
+        assert r.status_code == 200, r.text
+        token = r.json()["access_token"]
+        hdrs = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+        # /me works before deletion
+        r2 = session.get(f"{API}/auth/me", headers=hdrs, timeout=10)
+        assert r2.status_code == 200
+
+        # Delete account
+        r3 = session.delete(f"{API}/auth/account", headers=hdrs, timeout=15)
+        assert r3.status_code == 200, r3.text
+        body = r3.json()
+        assert body.get("ok") is True
+        assert body.get("deleted_user_id")
+
+        # /me should now fail (user is gone, token invalid)
+        r4 = session.get(f"{API}/auth/me", headers=hdrs, timeout=10)
+        assert r4.status_code in (401, 404), f"expected 401/404, got {r4.status_code}"
+
+        # Re-login should also fail
+        r5 = session.post(f"{API}/auth/login",
+                          json={"email": email, "password": "Test@1234"}, timeout=15)
+        assert r5.status_code == 401

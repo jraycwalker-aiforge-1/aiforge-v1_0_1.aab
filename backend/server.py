@@ -588,6 +588,14 @@ Each provider receives only your prompt text. We do not send your account email 
 - We do NOT show your content to other users
 - We do NOT sell your data to anyone
 - We do NOT use cookies for tracking
+- We do NOT collect location, contacts, camera, microphone, or files on your device
+
+## Google Play Data Safety declarations
+- Data collected: email, name, purchase history, user-generated content (prompts, images, videos, 3D models)
+- Data shared: only your prompt text is sent to AI providers listed above to fulfill your request
+- Data encrypted in transit (HTTPS)
+- Data can be deleted: yes — see below
+- All data collection is optional (only what you enter or generate)
 
 ## Your rights
 - **Export**: every asset can be exported (PNG, MP4, STL) via the share sheet
@@ -600,11 +608,83 @@ AiForge is not intended for users under 13.
 
 ## Changes
 We will notify you in-app if this policy changes.
+
+## Contact
+privacy@aiforge.app
+"""
+
+TERMS_OF_SERVICE = """# AiForge Terms of Service
+
+Last updated: February 2026
+
+## 1. Acceptance
+By using AiForge you agree to these terms. If you do not agree, do not use the app.
+
+## 2. What AiForge does
+AiForge lets you generate images, videos, and 3D-printable models using AI providers.
+Content is generated on demand and saved to your private library.
+
+## 3. Your account
+- You must provide a valid email and a password of at least 6 characters.
+- You are responsible for keeping your password safe.
+- One account per person. No shared or bot accounts.
+- Minimum age: 13.
+
+## 4. Credits & payments
+- New accounts receive 10 free credits.
+- Additional credits can be purchased in packs (Starter / Creator / Pro / Studio).
+- Costs: image = 1 credit, 3D model = 2 credits, video = 5 credits. Failed jobs are automatically refunded.
+- Payments are processed by Stripe. We do not see your card details.
+- Credits are non-refundable once consumed. Unconsumed credits do not expire.
+- Prices shown in USD. Local tax may be added at checkout.
+
+## 5. Acceptable use — you agree NOT to
+- Generate content that is illegal in your jurisdiction.
+- Generate CSAM, non-consensual sexual content, or content designed to deceive/impersonate real people.
+- Generate content that violates any third-party rights (copyright, trademark, publicity).
+- Attempt to bypass credit limits, reverse-engineer the app, or resell access.
+- Use the app to send spam, malware, or automated attacks.
+
+We reserve the right to suspend accounts that violate these rules. Serious violations may be reported to authorities.
+
+## 6. Ownership of generated content
+- You own the content you generate, subject to the underlying AI provider terms
+  (Google/OpenAI/Anthropic/Microsoft).
+- We do not claim ownership of anything you create.
+- You are responsible for how you use, publish, or sell your generated content.
+
+## 7. Availability
+- We aim for high uptime but do not guarantee it.
+- Third-party AI providers may fail or be unavailable; we will refund credits for failed jobs.
+- Features may change without notice as we improve the app.
+
+## 8. Termination
+- You can delete your account any time from Profile → Delete Account.
+- We may terminate accounts that violate section 5 or these terms.
+- On termination, your assets are permanently deleted.
+
+## 9. Disclaimer
+The app is provided "as-is" without warranties. AI-generated content may be inaccurate or unexpected.
+Do not rely on generated STL files for load-bearing, medical, or safety-critical prints without your own validation.
+
+## 10. Limitation of liability
+To the maximum extent allowed by law, AiForge is not liable for indirect damages, lost profits,
+or lost data. Our total liability is capped at the amount you paid us in the previous 12 months.
+
+## 11. Governing law
+These terms are governed by the laws of the jurisdiction where AiForge is headquartered.
+
+## 12. Contact
+support@aiforge.app · privacy@aiforge.app
 """
 
 @api.get("/legal/privacy")
 async def get_privacy():
     return {"policy": PRIVACY_POLICY, "updated_at": "2026-02-04"}
+
+@api.get("/legal/terms")
+async def get_terms():
+    return {"terms": TERMS_OF_SERVICE, "updated_at": "2026-02-04"}
 
 @api.delete("/auth/account")
 async def delete_account(user: dict = Depends(get_current_user)):
